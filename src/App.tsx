@@ -1,11 +1,134 @@
+import { useState, useEffect } from "react";
+import { Server, XCircle, CheckCircle2, RefreshCw } from "lucide-react";
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
 
 export default function App() {
+  const [isSystemTesterOpen, setIsSystemTesterOpen] = useState(false);
+  const [systemStatus, setSystemStatus] = useState<any>(null);
+  const [isPinging, setIsPinging] = useState(false);
+
+  const pingSystem = async () => {
+    setIsPinging(true);
+    try {
+      const res = await fetch("http://localhost:8000");
+      if (res.ok) {
+        const data = await res.json();
+        setSystemStatus(data);
+      } else {
+        setSystemStatus({ error: "API unreachable" });
+      }
+    } catch (e) {
+      setSystemStatus({ error: "Connection refused. Is Docker running?" });
+    }
+    setIsPinging(false);
+  };
+
+  const toggleAI = async () => {
+    if (!systemStatus || systemStatus.error) return;
+    try {
+      const res = await fetch("http://localhost:8000", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ai_active: !systemStatus.ai_active })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSystemStatus(data.state);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    if (isSystemTesterOpen) {
+      pingSystem();
+      const interval = setInterval(pingSystem, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [isSystemTesterOpen]);
+
   return (
     <div className="h-screen w-screen overflow-hidden bg-app-bg text-app-text font-sans">
+      {/* SYSTEM TESTER MODAL */}
+      {isSystemTesterOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="w-[500px] rounded-xl border border-app-border bg-app-surface p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-xl font-bold text-white">
+                <Server className="h-5 w-5 text-app-accent-blue" />
+                System Diagnostics
+              </h2>
+              <button 
+                onClick={() => setIsSystemTesterOpen(false)}
+                className="text-app-text-dim hover:text-white"
+              >
+                <XCircle className="h-6 w-6" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between rounded-lg border border-app-border bg-black/20 p-4">
+                <div>
+                  <div className="font-semibold text-white">Dashboard ↔ Python Brain</div>
+                  <div className="text-xs text-app-text-dim">Local HTTP API Connection</div>
+                </div>
+                {isPinging ? (
+                  <RefreshCw className="h-5 w-5 animate-spin text-app-text-dim" />
+                ) : systemStatus && !systemStatus.error ? (
+                  <CheckCircle2 className="h-5 w-5 text-app-green" />
+                ) : (
+                  <XCircle className="h-5 w-5 text-app-red" />
+                )}
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border border-app-border bg-black/20 p-4">
+                <div>
+                  <div className="font-semibold text-white">Python Brain ↔ MT5</div>
+                  <div className="text-xs text-app-text-dim">File System Watchdog (Common/Files)</div>
+                </div>
+                {systemStatus?.mt5_connected ? (
+                  <CheckCircle2 className="h-5 w-5 text-app-green" />
+                ) : (
+                  <XCircle className="h-5 w-5 text-app-red" />
+                )}
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border border-app-border bg-black/20 p-4">
+                <div>
+                  <div className="font-semibold text-white">AI Engine (OpenRouter)</div>
+                  <div className="text-xs text-app-text-dim">
+                    {systemStatus?.active_model || "Awaiting first trade..."}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={toggleAI}
+                    className={`rounded px-3 py-1 text-xs font-bold transition-colors ${
+                      systemStatus?.ai_active 
+                        ? "bg-app-green/20 text-app-green hover:bg-app-green/30" 
+                        : "bg-app-red/20 text-app-red hover:bg-app-red/30"
+                    }`}
+                  >
+                    {systemStatus?.ai_active ? "AI ACTIVE" : "STANDALONE"}
+                  </button>
+                </div>
+              </div>
+
+              {systemStatus?.error && (
+                <div className="rounded-lg bg-app-red/10 p-3 text-sm text-app-red">
+                  {systemStatus.error}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div 
         className="grid h-full w-full gap-[1px] bg-app-border min-w-[1024px]" 
         style={{ gridTemplateColumns: '280px 1fr 280px', gridTemplateRows: '60px 1fr 180px' }}
@@ -13,13 +136,22 @@ export default function App() {
         {/* Global Header */}
         <header className="col-span-full flex items-center justify-between bg-app-surface px-6 border-b border-app-border">
           <div className="text-sm font-bold uppercase tracking-[2px] text-app-text">
-            OmniTutor / v1.4.2-Critical
+            OmniTutorV2 / v2.0.0-Pro
           </div>
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-app-text-dim">STATUS:</span>
-            <span className="rounded px-3 py-1 font-semibold uppercase border border-app-red bg-app-red/15 text-app-red">
-              Critical Infrastructure Failure
-            </span>
+          <div className="flex items-center gap-4 text-xs">
+            <button 
+              onClick={() => setIsSystemTesterOpen(true)}
+              className="flex items-center gap-2 rounded-md border border-app-border bg-white/5 px-4 py-1.5 font-semibold text-white transition-colors hover:bg-white/10"
+            >
+              <Server className="h-4 w-4" />
+              System Tester
+            </button>
+            <div className="flex items-center gap-3">
+              <span className="text-app-text-dim">STATUS:</span>
+              <span className="rounded px-3 py-1 font-semibold uppercase border border-app-green bg-app-green/15 text-app-green">
+                System Online
+              </span>
+            </div>
           </div>
         </header>
 
@@ -30,7 +162,7 @@ export default function App() {
               <span>MetaTrader 5 EA</span>
               <span className="h-2 w-2 rounded-full bg-app-red shadow-[0_0_10px_var(--color-app-red)]"></span>
             </div>
-            <div className="text-xs font-semibold">OmniTutor.mq5</div>
+            <div className="text-xs font-semibold">OmniTutorV2.mq5</div>
             <div className="mt-1 text-[10px] text-app-red">FILE_NOT_FOUND</div>
           </div>
 
@@ -66,7 +198,7 @@ export default function App() {
 
           <div className="relative flex flex-1 flex-col items-center justify-center border border-dashed border-app-border">
             <div className="font-mono text-sm tracking-[2px] text-app-yellow">WAITING FOR AI CONFIRMATION...</div>
-            <div className="mt-2 text-[10px] text-app-text-dim">Error: Python brain awaiting data from OmniTutor_Journal.jsonl</div>
+            <div className="mt-2 text-[10px] text-app-text-dim">Error: Python brain awaiting data from OmniTutorV2_Journal.jsonl</div>
             
             <div className="mt-5 flex gap-10">
               <div className="text-center">

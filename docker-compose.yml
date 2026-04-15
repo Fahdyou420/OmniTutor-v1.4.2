@@ -21,6 +21,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.python
+    ports:
+      - "8000:8000"
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       # Tell Python to look in the mapped Docker volume

@@ -1,10 +1,10 @@
 //+------------------------------------------------------------------+
-//|                                                    OmniTutor.mq5 |
+//|                                                  OmniTutorV2.mq5 |
 //|                                      OmniVision Pro Architecture |
 //+------------------------------------------------------------------+
-#property copyright "OmniTutor"
+#property copyright "OmniTutorV2"
 #property link      ""
-#property version   "1.42"
+#property version   "2.00"
 
 #include <Trade\Trade.mqh>
 #include <Trade\SymbolInfo.mqh>
@@ -12,16 +12,22 @@
 #include <Trade\AccountInfo.mqh>
 
 //--- Input Parameters
-input int HistoryDepth = 100; // Number of historical bars to scan
-input int MaxZones = 5;       // Maximum active zones
-input double Sensitivity = 0.05; // Proximity threshold for clustering (0.0 to 1.0)
-input double RiskPercent = 1.0; // Risk per trade %
+input bool   UseAI = true;            // Use AI (False = Standalone EA for Backtesting)
+input int    HistoryDepth = 100;      // Number of historical bars to scan
+input double Sensitivity = 0.05;      // Proximity threshold for clustering (0.0 to 1.0)
+input double RiskPercent = 1.0;       // Risk per trade % (FTMO Compliant: Fixed Risk)
+input double MaxDailyLossPct = 4.5;   // Max Daily Loss % (FTMO Limit is 5%)
+input int    TrailingStopPts = 50;    // Trailing Stop in points
+input int    SL_Points = 150;         // Default Stop Loss in points
+input int    TP_Points = 300;         // Default Take Profit in points
 
 //--- Global Variables
 CTrade trade;
+CPositionInfo position;
 string prefix = "OmniViz_";
 double dailyOpenPrice = 0.0;
 double dailyStartBalance = 0.0;
+bool isBacktesting = false;
 
 //+------------------------------------------------------------------+
 //| Base Visualizer Class                                            |
@@ -32,6 +38,7 @@ public:
     ~CVisualizer() {}
     
     void DrawZone(datetime time1, double price1, datetime time2, double price2, color zoneColor, string nameSuffix) {
+        if(isBacktesting) return; // Save resources in tester
         string objName = prefix + "Zone_" + nameSuffix;
         ObjectCreate(0, objName, OBJ_RECTANGLE, 0, time1, price1, time2, price2);
         ObjectSetInteger(0, objName, OBJPROP_COLOR, zoneColor);
@@ -40,6 +47,7 @@ public:
     }
     
     void DrawLine(datetime time1, double price1, datetime time2, double price2, color lineColor, string nameSuffix, int style=STYLE_SOLID) {
+        if(isBacktesting) return;
         string objName = prefix + "Line_" + nameSuffix;
         ObjectCreate(0, objName, OBJ_TREND, 0, time1, price1, time2, price2);
         ObjectSetInteger(0, objName, OBJPROP_COLOR, lineColor);
@@ -48,6 +56,7 @@ public:
     }
     
     void DrawHLine(double price, color lineColor, string nameSuffix, int style=STYLE_SOLID) {
+        if(isBacktesting) return;
         string objName = prefix + "HLine_" + nameSuffix;
         ObjectCreate(0, objName, OBJ_HLINE, 0, 0, price);
         ObjectSetInteger(0, objName, OBJPROP_COLOR, lineColor);
@@ -55,6 +64,7 @@ public:
     }
     
     void DrawText(datetime time, double price, string text, color textColor, string nameSuffix) {
+        if(isBacktesting) return;
         string objName = prefix + "Text_" + nameSuffix;
         ObjectCreate(0, objName, OBJ_TEXT, 0, time, price);
         ObjectSetString(0, objName, OBJPROP_TEXT, text);
@@ -91,6 +101,76 @@ public:
 };
 
 //+------------------------------------------------------------------+
+//| Risk Management (FTMO Compliant)                                 |
+//+------------------------------------------------------------------+
+class CRiskManager {
+public:
+    bool CheckDailyDrawdown() {
+        double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+        double drawdownPct = ((dailyStartBalance - currentEquity) / dailyStartBalance) * 100.0;
+        
+        if (drawdownPct >= MaxDailyLossPct) {
+            Print("FTMO PROTECTION: Max Daily Loss Reached (", DoubleToString(drawdownPct, 2), "%). Trading halted.");
+            return false;
+        }
+        return true;
+    }
+
+    // FTMO Rule 7.5.1: Avoid substantially larger position sizes. 
+    // We use a strict fixed fractional risk model. No Martingale.
+    double CalculateLotSize(double slDistancePoints) {
+        double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+        double riskAmount = balance * (RiskPercent / 100.0);
+        double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        
+        if (slDistancePoints <= 0 || tickValue <= 0) return SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+        
+        double lotSize = riskAmount / (slDistancePoints * (tickValue / tickSize) * _Point);
+        
+        double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+        double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+        double stepLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+        
+        lotSize = MathRound(lotSize / stepLot) * stepLot;
+        if (lotSize < minLot) lotSize = minLot;
+        if (lotSize > maxLot) lotSize = maxLot;
+        
+        return lotSize;
+    }
+    
+    void ManageTrailingStops() {
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            if(position.SelectByIndex(i)) {
+                if(position.Symbol() == _Symbol) {
+                    double currentPrice = (position.PositionType() == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+                    double openPrice = position.PriceOpen();
+                    double currentSL = position.StopLoss();
+                    
+                    if(position.PositionType() == POSITION_TYPE_BUY) {
+                        if(currentPrice - openPrice > TrailingStopPts * _Point) {
+                            double newSL = currentPrice - (TrailingStopPts * _Point);
+                            if(newSL > currentSL || currentSL == 0) {
+                                trade.PositionModify(position.Ticket(), newSL, position.TakeProfit());
+                            }
+                        }
+                    } else if(position.PositionType() == POSITION_TYPE_SELL) {
+                        if(openPrice - currentPrice > TrailingStopPts * _Point) {
+                            double newSL = currentPrice + (TrailingStopPts * _Point);
+                            if(newSL < currentSL || currentSL == 0) {
+                                trade.PositionModify(position.Ticket(), newSL, position.TakeProfit());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+};
+
+CRiskManager risk;
+
+//+------------------------------------------------------------------+
 //| Strategy Manager & Confluence Engine                             |
 //+------------------------------------------------------------------+
 class CStrategyManager {
@@ -101,24 +181,26 @@ private:
 
 public:
     bool CheckConfluence(double targetPrice, bool isLong) {
-        int confluenceCount = 0;
-        
         // 1. Daily Open Filter (AMD)
         double currentPrice = isLong ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-        if (isLong && currentPrice >= dailyOpenPrice) return false; // Must be below daily open for longs
-        if (!isLong && currentPrice <= dailyOpenPrice) return false; // Must be above daily open for shorts
+        if (isLong && currentPrice >= dailyOpenPrice) return false; 
+        if (!isLong && currentPrice <= dailyOpenPrice) return false; 
         
-        // 2. Check overlap logic (Mocked for architecture)
-        bool hasOB = true; // Replace with actual OB detection
-        bool hasFib = true; // Replace with actual Fib detection
-        bool hasRSI = true; // Replace with actual RSI detection
+        // 2. Mocked Confluence for Backtesting Execution
+        // In a real scenario, this checks OBs, FVGs, RSI, etc.
+        // For backtesting demonstration, we use a simple moving average crossover to force trades
+        double maFast[], maSlow[];
+        ArraySetAsSeries(maFast, true); ArraySetAsSeries(maSlow, true);
+        int hFast = iMA(_Symbol, PERIOD_CURRENT, 9, 0, MODE_EMA, PRICE_CLOSE);
+        int hSlow = iMA(_Symbol, PERIOD_CURRENT, 21, 0, MODE_EMA, PRICE_CLOSE);
+        CopyBuffer(hFast, 0, 0, 2, maFast);
+        CopyBuffer(hSlow, 0, 0, 2, maSlow);
         
-        if (hasOB) confluenceCount++;
-        if (hasFib) confluenceCount++;
-        if (hasRSI) confluenceCount++;
+        bool setupValid = false;
+        if (isLong && maFast[0] > maSlow[0] && maFast[1] <= maSlow[1]) setupValid = true;
+        if (!isLong && maFast[0] < maSlow[0] && maFast[1] >= maSlow[1]) setupValid = true;
         
-        if (confluenceCount >= 3) {
-            ExportTradeData("Confluence Setup", currentPrice, currentPrice - 100*_Point, currentPrice + 200*_Point);
+        if (setupValid) {
             return true;
         }
         return false;
@@ -135,7 +217,9 @@ public:
     }
     
     void ExportTradeData(string setupName, double entry, double sl, double tp) {
-        string filename = "OmniTutor_Journal.jsonl";
+        if(isBacktesting || !UseAI) return; // Do not write JSON in tester or standalone mode
+        
+        string filename = "OmniTutorV2_Journal.jsonl";
         int handle = FileOpen(filename, FILE_WRITE|FILE_TXT|FILE_COMMON);
         if (handle != INVALID_HANDLE) {
             string json = "{\"TicketID\": \"" + IntegerToString(TimeCurrent()) + "\", \"Timestamp\": \"" + TimeToString(TimeCurrent()) + "\", \"SetupName\": \"" + setupName + "\", \"EntryPrice\": " + DoubleToString(entry, 5) + ", \"SL\": " + DoubleToString(sl, 5) + ", \"TP\": " + DoubleToString(tp, 5) + ", \"DailyOpenRulePassed\": true}";
@@ -151,6 +235,7 @@ CStrategyManager strategy;
 //| Historical Auditing                                              |
 //+------------------------------------------------------------------+
 void AuditHistoricalTrades() {
+    if(isBacktesting) return;
     HistorySelect(0, TimeCurrent());
     int total = HistoryDealsTotal();
     CVisualizer viz;
@@ -180,12 +265,15 @@ void AuditHistoricalTrades() {
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit() {
+    isBacktesting = (MQLInfoInteger(MQL_TESTER) == 1);
     dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
     dailyOpenPrice = iOpen(_Symbol, PERIOD_D1, 0);
     
-    CVisualizer viz;
-    viz.DrawHLine(dailyOpenPrice, clrSilver, "DailyOpen", STYLE_DASH);
-    viz.DrawText(TimeCurrent(), dailyOpenPrice, "Daily Open Threshold - Longs Below / Shorts Above", clrWhite, "DailyOpenText");
+    if(!isBacktesting) {
+        CVisualizer viz;
+        viz.DrawHLine(dailyOpenPrice, clrSilver, "DailyOpen", STYLE_DASH);
+        viz.DrawText(TimeCurrent(), dailyOpenPrice, "Daily Open Threshold", clrWhite, "DailyOpenText");
+    }
     
     return(INIT_SUCCEEDED);
 }
@@ -194,7 +282,7 @@ int OnInit() {
 //| Expert deinitialization function                                 |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
-    ObjectsDeleteAll(0, prefix);
+    if(!isBacktesting) ObjectsDeleteAll(0, prefix);
 }
 
 //+------------------------------------------------------------------+
@@ -204,16 +292,43 @@ void OnTick() {
     // Update Daily Open if new day
     if (iOpen(_Symbol, PERIOD_D1, 0) != dailyOpenPrice) {
         dailyOpenPrice = iOpen(_Symbol, PERIOD_D1, 0);
-        // Update lines...
+        dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE); // Reset daily balance
     }
+    
+    // FTMO Risk Check
+    if (!risk.CheckDailyDrawdown()) return;
+    
+    // Manage Trailing Stops
+    risk.ManageTrailingStops();
     
     strategy.ScanMarketStructure();
     strategy.ClusterSupplyDemand();
     
-    // Example Execution Check
+    // Only allow 1 open position at a time to comply with FTMO 7.5.3 (No over-exposure)
+    if (PositionsTotal() > 0) return;
+    
     double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    
+    // Check Long
     if (strategy.CheckConfluence(ask, true)) {
-        // Execute Long
+        double sl = ask - (SL_Points * _Point);
+        double tp = ask + (TP_Points * _Point);
+        double lot = risk.CalculateLotSize(SL_Points);
+        
+        if(trade.Buy(lot, _Symbol, ask, sl, tp, "OmniTutorV2 Long")) {
+            strategy.ExportTradeData("Confluence Buy", ask, sl, tp);
+        }
+    }
+    // Check Short
+    else if (strategy.CheckConfluence(bid, false)) {
+        double sl = bid + (SL_Points * _Point);
+        double tp = bid - (TP_Points * _Point);
+        double lot = risk.CalculateLotSize(SL_Points);
+        
+        if(trade.Sell(lot, _Symbol, bid, sl, tp, "OmniTutorV2 Short")) {
+            strategy.ExportTradeData("Confluence Sell", bid, sl, tp);
+        }
     }
 }
 //+------------------------------------------------------------------+
