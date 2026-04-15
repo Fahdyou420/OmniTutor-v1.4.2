@@ -39,17 +39,17 @@ export default function App() {
               <span>Python Brain Engine</span>
               <span className="h-2 w-2 rounded-full bg-app-green shadow-[0_0_10px_var(--color-app-green)]"></span>
             </div>
-            <div className="text-xs font-semibold">main.py (PID: 2841)</div>
-            <div className="mt-1 text-[10px] text-app-text-dim">Polling MT5_COMMON_DIR...</div>
+            <div className="text-xs font-semibold">main.py (Self-Learning)</div>
+            <div className="mt-1 text-[10px] text-app-green">MEMORY NODES: ACTIVE</div>
           </div>
 
           <div className="rounded-md border border-app-border bg-white/2 p-3">
             <div className="mb-2 flex justify-between text-[10px] font-semibold uppercase text-app-text-dim">
               <span>LLM Interface</span>
-              <span className="h-2 w-2 rounded-full bg-app-red shadow-[0_0_10px_var(--color-app-red)]"></span>
+              <span className="h-2 w-2 rounded-full bg-app-yellow shadow-[0_0_10px_var(--color-app-yellow)]"></span>
             </div>
-            <div className="text-xs font-semibold">OpenRouter / Claude-3</div>
-            <div className="mt-1 text-[10px] text-app-red">AUTH: API_KEY_MISSING</div>
+            <div className="text-xs font-semibold">OpenRouter / Free Tier</div>
+            <div className="mt-1 text-[10px] text-app-yellow">FALLBACK ROUTING ENABLED</div>
           </div>
 
           <button className="mt-auto border border-app-border bg-transparent p-2.5 text-[11px] font-semibold uppercase text-app-text transition-all duration-200 hover:bg-app-text hover:text-app-bg">
@@ -106,18 +106,22 @@ export default function App() {
           </div>
 
           <div>
-            <div className="mb-3 border-b border-app-border pb-1 text-[10px] font-bold uppercase text-app-text-dim">Signal History</div>
-            <div className="flex justify-between border-b border-white/5 py-2 text-[11px]">
-              <span>SELL FVG Fill</span>
-              <span className="text-app-text-dim">13:38:57</span>
-            </div>
-            <div className="flex justify-between border-b border-white/5 py-2 text-[11px]">
-              <span>SELL FVG Fill</span>
-              <span className="text-app-text-dim">13:38:57</span>
-            </div>
-            <div className="flex justify-between border-b border-white/5 py-2 text-[11px]">
-              <span>BUY FVG Fill</span>
-              <span className="text-app-text-dim">18:48:47</span>
+            <div className="mb-3 border-b border-app-border pb-1 text-[10px] font-bold uppercase text-app-text-dim">Memory Nodes (Self-Learning)</div>
+            <div className="flex flex-col gap-2">
+              <div className="rounded border border-white/5 bg-black/20 p-2">
+                <div className="flex justify-between text-[10px] text-app-text-dim">
+                  <span>Node: a8f9b2c1</span>
+                  <span>14:22:10</span>
+                </div>
+                <div className="mt-1 text-[11px] text-app-green">"Recognized FVG pattern success rate improving in discount zones."</div>
+              </div>
+              <div className="rounded border border-white/5 bg-black/20 p-2">
+                <div className="flex justify-between text-[10px] text-app-text-dim">
+                  <span>Node: c4d7e9f0</span>
+                  <span>11:05:33</span>
+                </div>
+                <div className="mt-1 text-[11px] text-app-yellow">"Previous BOS entry failed; adjusting sensitivity for liquidity sweeps."</div>
+              </div>
             </div>
           </div>
 
