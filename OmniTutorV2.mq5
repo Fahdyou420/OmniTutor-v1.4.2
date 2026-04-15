@@ -110,10 +110,19 @@ public:
         double drawdownPct = ((dailyStartBalance - currentEquity) / dailyStartBalance) * 100.0;
         
         if (drawdownPct >= MaxDailyLossPct) {
-            Print("FTMO PROTECTION: Max Daily Loss Reached (", DoubleToString(drawdownPct, 2), "%). Trading halted.");
+            Print("FTMO PROTECTION: Max Daily Loss Reached (", DoubleToString(drawdownPct, 2), "%). Closing all positions and halting.");
+            CloseAllPositions();
             return false;
         }
         return true;
+    }
+
+    void CloseAllPositions() {
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            if(position.SelectByIndex(i)) {
+                trade.PositionClose(position.Ticket());
+            }
+        }
     }
 
     // FTMO Rule 7.5.1: Avoid substantially larger position sizes. 
@@ -181,29 +190,79 @@ private:
 
 public:
     bool CheckConfluence(double targetPrice, bool isLong) {
-        // 1. Daily Open Filter (AMD)
+        // 1. Daily Open Filter (AMD) - Power of 3
         double currentPrice = isLong ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-        if (isLong && currentPrice >= dailyOpenPrice) return false; 
-        if (!isLong && currentPrice <= dailyOpenPrice) return false; 
+        if (isLong && currentPrice >= dailyOpenPrice) return false; // Longs only in Discount
+        if (!isLong && currentPrice <= dailyOpenPrice) return false; // Shorts only in Premium
         
-        // 2. Mocked Confluence for Backtesting Execution
-        // In a real scenario, this checks OBs, FVGs, RSI, etc.
-        // For backtesting demonstration, we use a simple moving average crossover to force trades
-        double maFast[], maSlow[];
-        ArraySetAsSeries(maFast, true); ArraySetAsSeries(maSlow, true);
-        int hFast = iMA(_Symbol, PERIOD_CURRENT, 9, 0, MODE_EMA, PRICE_CLOSE);
-        int hSlow = iMA(_Symbol, PERIOD_CURRENT, 21, 0, MODE_EMA, PRICE_CLOSE);
-        CopyBuffer(hFast, 0, 0, 2, maFast);
-        CopyBuffer(hSlow, 0, 0, 2, maSlow);
+        // 2. Trend Filter (EMA 200)
+        double ema200[];
+        ArraySetAsSeries(ema200, true);
+        int hEma200 = iMA(_Symbol, PERIOD_CURRENT, 200, 0, MODE_EMA, PRICE_CLOSE);
+        if(CopyBuffer(hEma200, 0, 0, 1, ema200) <= 0) return false;
+        
+        // 3. RSI for Micro Execution
+        double rsi[];
+        ArraySetAsSeries(rsi, true);
+        int hRsi = iRSI(_Symbol, PERIOD_CURRENT, 14, PRICE_CLOSE);
+        if(CopyBuffer(hRsi, 0, 0, 2, rsi) <= 0) return false;
+        
+        // 4. FVG / Orderblock Detection (Macro Structure)
+        double high[], low[], close[], open[];
+        ArraySetAsSeries(high, true); ArraySetAsSeries(low, true); 
+        ArraySetAsSeries(close, true); ArraySetAsSeries(open, true);
+        if(CopyHigh(_Symbol, PERIOD_CURRENT, 0, 10, high) <= 0) return false;
+        if(CopyLow(_Symbol, PERIOD_CURRENT, 0, 10, low) <= 0) return false;
+        if(CopyClose(_Symbol, PERIOD_CURRENT, 0, 10, close) <= 0) return false;
+        if(CopyOpen(_Symbol, PERIOD_CURRENT, 0, 10, open) <= 0) return false;
         
         bool setupValid = false;
-        if (isLong && maFast[0] > maSlow[0] && maFast[1] <= maSlow[1]) setupValid = true;
-        if (!isLong && maFast[0] < maSlow[0] && maFast[1] >= maSlow[1]) setupValid = true;
         
-        if (setupValid) {
-            return true;
+        if (isLong) {
+            if (currentPrice < ema200[0]) return false; // Must be in uptrend
+            
+            bool fvgFound = false;
+            double fvgTop = 0, fvgBottom = 0;
+            for (int i = 1; i <= 5; i++) {
+                // Bullish FVG: Candle i+2 High < Candle i Low
+                if (high[i+2] < low[i] && close[i+1] > open[i+1]) { 
+                    fvgFound = true;
+                    fvgTop = low[i];
+                    fvgBottom = high[i+2];
+                    break;
+                }
+            }
+            
+            // If FVG found, check if price is mitigating it and RSI is hooking up
+            if (fvgFound && currentPrice <= fvgTop && currentPrice >= fvgBottom) {
+                if (rsi[0] > rsi[1] && rsi[1] < 45) {
+                    setupValid = true;
+                }
+            }
+        } else {
+            if (currentPrice > ema200[0]) return false; // Must be in downtrend
+            
+            bool fvgFound = false;
+            double fvgTop = 0, fvgBottom = 0;
+            for (int i = 1; i <= 5; i++) {
+                // Bearish FVG: Candle i+2 Low > Candle i High
+                if (low[i+2] > high[i] && close[i+1] < open[i+1]) { 
+                    fvgFound = true;
+                    fvgTop = low[i+2];
+                    fvgBottom = high[i];
+                    break;
+                }
+            }
+            
+            // If FVG found, check if price is mitigating it and RSI is hooking down
+            if (fvgFound && currentPrice >= fvgBottom && currentPrice <= fvgTop) {
+                if (rsi[0] < rsi[1] && rsi[1] > 55) {
+                    setupValid = true;
+                }
+            }
         }
-        return false;
+        
+        return setupValid;
     }
     
     void ScanMarketStructure() {
@@ -340,11 +399,11 @@ void OnTick() {
         dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE); // Reset daily balance
     }
     
-    // FTMO Risk Check
-    if (!risk.CheckDailyDrawdown()) return;
-    
-    // Manage Trailing Stops
+    // Manage Trailing Stops (always run this to protect open positions)
     risk.ManageTrailingStops();
+    
+    // FTMO Risk Check (halts new trades if drawdown exceeded)
+    if (!risk.CheckDailyDrawdown()) return;
     
     strategy.ScanMarketStructure();
     strategy.ClusterSupplyDemand();
