@@ -14,6 +14,8 @@ JOURNAL_FILE = "OmniTutorV2_Journal.jsonl"
 EXPLANATION_FILE = "OmniTutorV2_Explanations.txt"
 MEMORY_FILE = "OmniTutorV2_MemoryNodes.json"
 STATUS_FILE = "OmniTutorV2_Status.json"
+TELEMETRY_FILE = "OmniTutorV2_Telemetry.json"
+COMMAND_FILE = "OmniTutorV2_Command.json"
 
 # OpenRouter Configuration - Using strictly FREE models
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "YOUR_API_KEY_HERE")
@@ -30,7 +32,10 @@ system_state = {
     "last_ping": time.time(),
     "mt5_connected": False,
     "total_trades_analyzed": 0,
-    "active_model": FREE_MODELS[0]
+    "active_model": FREE_MODELS[0],
+    "telemetry": None,
+    "memory_nodes": [],
+    "last_trade": None
 }
 
 class DashboardAPIHandler(BaseHTTPRequestHandler):
@@ -41,7 +46,40 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         
         system_state["last_ping"] = time.time()
-        system_state["mt5_connected"] = os.path.exists(os.path.join(MT5_COMMON_DIR, JOURNAL_FILE))
+        
+        # Check MT5 connection via Telemetry file
+        telemetry_path = os.path.join(MT5_COMMON_DIR, TELEMETRY_FILE)
+        system_state["mt5_connected"] = os.path.exists(telemetry_path)
+        
+        if system_state["mt5_connected"]:
+            try:
+                with open(telemetry_path, 'r') as f:
+                    content = f.read().strip()
+                    if content:
+                        system_state["telemetry"] = json.loads(content)
+            except Exception:
+                pass
+                
+        # Read Memory Nodes
+        memory_path = os.path.join(MT5_COMMON_DIR, MEMORY_FILE)
+        if os.path.exists(memory_path):
+            try:
+                with open(memory_path, 'r') as f:
+                    nodes = json.load(f)
+                    system_state["memory_nodes"] = nodes[-2:] if len(nodes) >= 2 else nodes
+            except Exception:
+                system_state["memory_nodes"] = []
+                
+        # Read Last Trade
+        journal_path = os.path.join(MT5_COMMON_DIR, JOURNAL_FILE)
+        if os.path.exists(journal_path):
+            try:
+                with open(journal_path, 'r') as f:
+                    lines = f.readlines()
+                    if lines:
+                        system_state["last_trade"] = json.loads(lines[-1].strip())
+            except Exception:
+                pass
         
         self.wfile.write(json.dumps(system_state).encode('utf-8'))
         
@@ -52,6 +90,14 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         
         if "ai_active" in data:
             system_state["ai_active"] = data["ai_active"]
+            
+        if "command" in data:
+            cmd_path = os.path.join(MT5_COMMON_DIR, COMMAND_FILE)
+            try:
+                with open(cmd_path, 'w') as f:
+                    f.write(data["command"])
+            except Exception as e:
+                print(f"Failed to write command: {e}")
             
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')

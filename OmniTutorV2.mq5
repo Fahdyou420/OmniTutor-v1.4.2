@@ -273,6 +273,7 @@ int OnInit() {
         CVisualizer viz;
         viz.DrawHLine(dailyOpenPrice, clrSilver, "DailyOpen", STYLE_DASH);
         viz.DrawText(TimeCurrent(), dailyOpenPrice, "Daily Open Threshold", clrWhite, "DailyOpenText");
+        EventSetTimer(1); // 1 second timer for live dashboard telemetry
     }
     
     return(INIT_SUCCEEDED);
@@ -282,7 +283,51 @@ int OnInit() {
 //| Expert deinitialization function                                 |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
-    if(!isBacktesting) ObjectsDeleteAll(0, prefix);
+    if(!isBacktesting) {
+        ObjectsDeleteAll(0, prefix);
+        EventKillTimer();
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Expert timer function (Live Telemetry & Commands)                |
+//+------------------------------------------------------------------+
+void OnTimer() {
+    if(isBacktesting) return;
+    
+    // 1. Check for commands from the Dashboard
+    int cmdHandle = FileOpen("OmniTutorV2_Command.json", FILE_READ|FILE_TXT|FILE_COMMON);
+    if (cmdHandle != INVALID_HANDLE) {
+        string cmd = FileReadString(cmdHandle);
+        FileClose(cmdHandle);
+        if (StringFind(cmd, "CLOSE_ALL") >= 0) {
+            Print("Dashboard Command Received: CLOSE_ALL");
+            for(int i=PositionsTotal()-1; i>=0; i--) {
+                if(position.SelectByIndex(i)) trade.PositionClose(position.Ticket());
+            }
+            FileDelete("OmniTutorV2_Command.json", FILE_COMMON);
+        }
+    }
+    
+    // 2. Write Live Telemetry for Dashboard
+    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    
+    // Determine Phase (Simple MA for demonstration)
+    double maFast[], maSlow[];
+    ArraySetAsSeries(maFast, true); ArraySetAsSeries(maSlow, true);
+    int hFast = iMA(_Symbol, PERIOD_CURRENT, 9, 0, MODE_EMA, PRICE_CLOSE);
+    int hSlow = iMA(_Symbol, PERIOD_CURRENT, 21, 0, MODE_EMA, PRICE_CLOSE);
+    CopyBuffer(hFast, 0, 0, 1, maFast);
+    CopyBuffer(hSlow, 0, 0, 1, maSlow);
+    string phase = (maFast[0] > maSlow[0]) ? "BULLISH TREND" : "BEARISH TREND";
+    
+    int handle = FileOpen("OmniTutorV2_Telemetry.json", FILE_WRITE|FILE_TXT|FILE_COMMON);
+    if (handle != INVALID_HANDLE) {
+        string json = "{\"bid\": " + DoubleToString(bid, 5) + ", \"ask\": " + DoubleToString(ask, 5) + ", \"phase\": \"" + phase + "\", \"positions\": " + IntegerToString(PositionsTotal()) + "}";
+        FileWrite(handle, json);
+        FileClose(handle);
+    }
 }
 
 //+------------------------------------------------------------------+
