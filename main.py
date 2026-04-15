@@ -7,7 +7,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 # Configuration
-MT5_COMMON_DIR = r"C:\Users\user\AppData\Roaming\MetaQuotes\Terminal\Common\Files"
+MT5_COMMON_DIR = os.environ.get("MT5_DATA_DIR", r"C:\Users\user\AppData\Roaming\MetaQuotes\Terminal\Common\Files")
 JOURNAL_FILE = "OmniTutor_Journal.jsonl"
 EXPLANATION_FILE = "OmniTutor_Explanations.txt"
 MEMORY_FILE = "OmniTutor_MemoryNodes.json"

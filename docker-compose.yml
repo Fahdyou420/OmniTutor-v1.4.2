@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    ports:
+      - "3005:3005"
+    volumes:
+      # Mount current directory for live reloading
+      - .:/app
+      # Prevent overwriting container's node_modules
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+    env_file:
+      - .env
+
+  python-brain:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      # Tell Python to look in the mapped Docker volume
+      - MT5_DATA_DIR=/mt5_data
+    volumes:
+      # IMPORTANT: Replace 'user' with your actual Windows 11 username!
+      # This maps your host Windows MT5 folder into the Linux Docker container
+      - /c/Users/user/AppData/Roaming/MetaQuotes/Terminal/Common/Files:/mt5_data
+      # Mount main.py so you can edit it without rebuilding the container
+      - ./main.py:/app/main.py
+    env_file:
+      - .env
